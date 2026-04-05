@@ -1,0 +1,12 @@
+*.pickle
+*.pt
+*.cPickle
+*.fa
+*.pyc
+*.pkl
+__pycache__/
+.ruff_cache/
+.worktrees/
+models/
+models_rivals/
+data/
