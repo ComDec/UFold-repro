@@ -9,4 +9,6 @@ __pycache__/
 .worktrees/
 models/
 models_rivals/
+models_mxfold2/
 data/
+predictions_*.pkl

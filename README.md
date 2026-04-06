@@ -4,6 +4,40 @@ Reproducibility repository for **UFold** ([paper](https://doi.org/10.1093/nar/gk
 
 UFold is a deep learning method for RNA secondary structure prediction using U-Net fully convolutional networks. It predicts base-pairing contact maps from nucleotide sequences encoded as 17-channel image-like tensors.
 
+## Setup
+
+### Option A: Conda
+
+```bash
+# Create the environment (includes PyTorch with CUDA)
+conda env create -f environment.yml
+conda activate ufold-repro
+
+# Verify everything works
+python test_env.py
+```
+
+### Option B: Docker
+
+```bash
+# Build the image
+docker build -t ufold .
+
+# Run interactively with GPU support
+docker run --gpus all -it \
+    -v /path/to/data:/app/data \
+    -v /path/to/models:/app/models \
+    ufold bash
+
+# Or run a specific command
+docker run --gpus all \
+    -v /path/to/data:/app/data \
+    ufold python ufold_train_rivals.py --gpu 0 --data_dir /app/data
+```
+
+> **Note:** The legacy `UFold.yaml` file pins Python 3.11 / PyTorch 2.0.1 / CUDA 11.8.
+> Use `environment.yml` instead for a more flexible setup.
+
 ## Quick Start
 
 ```bash
@@ -61,7 +95,25 @@ All hyperparameters follow UFold official defaults:
 
 ## Evaluation Metrics
 
-Consistent with [DeepRNA](https://github.com/DLS5-Omics/DeepRNA) `secondary_structure_metircs`:
+Consistent with [DeepRNA]`secondary_structure_metircs`:
+
+```python
+true_label = contacts[0, :seq_len, :seq_len]
+# Flatten for binary metrics (matching secondary_structure_metircs)
+p = pred_prob.flatten()
+t = true_label.flatten().int()
+
+# Skip samples with no positive labels (AUROC/AUPRC undefined)
+if t.sum() == 0:
+    n_skipped += 1
+    continue
+
+all_precision.append(binary_precision(p, t, threshold=0.5).item())
+all_recall.append(binary_recall(p, t, threshold=0.5).item())
+all_f1.append(binary_f1_score(p, t, threshold=0.5).item())
+all_auroc.append(binary_auroc(p, t).item())
+all_auprc.append(binary_auprc(p, t).item())
+```
 
 - Per-sample: flatten prediction and label matrices, compute binary metrics, then macro-average.
 - Metrics: precision, recall, F1 (threshold=0.5), AUROC, AUPRC (via `torcheval`).

@@ -155,7 +155,7 @@ class RivalsDataset(data.Dataset):
                 data_seq[:data_len, i].reshape(-1, 1),
                 data_seq[:data_len, j].reshape(1, -1))
 
-        # Channel 17: creatmat thermodynamic feature (pre-computed in RivalsDataGenerator)
+        # Channel 16 (0-indexed): creatmat thermodynamic feature (pre-computed in RivalsDataGenerator)
         data_fcn_1 = np.zeros((1, l, l))
         data_fcn_1[0, :data_len, :data_len] = self.data.creatmat_cache[index]
 
@@ -167,8 +167,10 @@ class RivalsDataset(data.Dataset):
 # ======================================================================
 # Training -- identical to ufold_train.py:31-105
 # ======================================================================
-def train(contact_net, train_merge_generator, epoches_first, save_dir):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def train(contact_net, train_merge_generator, epoches_first, save_dir,
+          val_generator=None, device=None):
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     pos_weight = torch.Tensor([300]).to(device)
     criterion_bce_weighted = torch.nn.BCEWithLogitsLoss(
         pos_weight=pos_weight)
@@ -178,6 +180,8 @@ def train(contact_net, train_merge_generator, epoches_first, save_dir):
     print('start training...')
     for epoch in range(epoches_first):
         contact_net.train()
+        epoch_loss = 0.0
+        n_batches = 0
         for contacts, seq_embeddings, matrix_reps, seq_lens, seq_ori, seq_name in train_merge_generator:
             contacts_batch = torch.Tensor(contacts.float()).to(device)
             seq_embedding_batch = torch.Tensor(seq_embeddings.float()).to(device)
@@ -195,25 +199,62 @@ def train(contact_net, train_merge_generator, epoches_first, save_dir):
             loss_u.backward()
             u_optimizer.step()
             steps_done = steps_done + 1
+            epoch_loss += loss_u.item()
+            n_batches += 1
 
-        print('Training log: epoch: {}, step: {}, loss: {}'.format(
-            epoch, steps_done - 1, loss_u))
-        # [RIVALS] Save every 10 epochs + final epoch (original saves every epoch)
+        avg_loss = epoch_loss / max(n_batches, 1)
+        print('Training log: epoch: {}, step: {}, avg_loss: {:.6f}'.format(
+            epoch, steps_done - 1, avg_loss))
+
+        # Validation every 10 epochs
+        if val_generator is not None and (epoch + 1) % 10 == 0:
+            val_loss = _compute_val_loss(contact_net, val_generator, criterion_bce_weighted, device)
+            print(f'  Validation loss: {val_loss:.6f}')
+
+        # Save every 10 epochs + final epoch
         if epoch > -1:
             if (epoch + 1) % 10 == 0 or epoch == epoches_first - 1:
                 torch.save(contact_net.state_dict(),
                            os.path.join(save_dir, f'ufold_train_rivals_{epoch}.pt'))
 
 
+def _compute_val_loss(contact_net, val_generator, criterion, device):
+    """Compute average validation loss without postprocessing."""
+    contact_net.eval()
+    total_loss = 0.0
+    n = 0
+    with torch.no_grad():
+        for contacts, seq_embeddings, matrix_reps, seq_lens, seq_ori, seq_name in val_generator:
+            contacts_batch = torch.Tensor(contacts.float()).to(device)
+            seq_embedding_batch = torch.Tensor(seq_embeddings.float()).to(device)
+            pred_contacts = contact_net(seq_embedding_batch)
+            contact_masks = torch.zeros_like(pred_contacts)
+            contact_masks[:, :seq_lens, :seq_lens] = 1
+            loss = criterion(pred_contacts * contact_masks, contacts_batch)
+            total_loss += loss.item()
+            n += 1
+    contact_net.train()
+    return total_loss / max(n, 1)
+
+
 # ======================================================================
 # [RIVALS] Evaluation with metrics matching DeepRNA secondary_structure_metircs
 # ======================================================================
-def model_eval_all_test(contact_net, test_generator, device, dataset_name):
+def model_eval_all_test(contact_net, test_generator, device, dataset_name,
+                        save_predictions=None):
     """
-    Evaluate model on test set. Metrics are consistent with
+    Evaluate model on test set. Metrics are computed consistently with
     DeepRNA/deepprotein/tasks/utils.py:secondary_structure_metircs:
       - Per-sample: flatten pred & label, compute binary metrics, then average.
       - Postprocessing is applied before metric computation (same as ufold_test.py).
+      - Difference: samples with no positive labels are skipped (AUROC/AUPRC undefined).
+        DeepRNA does not skip such samples, which would produce NaN or crash.
+      - Difference: recall is included here; DeepRNA has it commented out due to a
+        torcheval bug workaround (TODO in their code).
+
+    If save_predictions is a path, saves per-sample predictions as a pickle file
+    containing list of dicts: {id, seq_len, pred_prob(NxN), label(NxN)}.
+    This enables users to re-evaluate with their own metric functions.
     """
     contact_net.eval()
     all_precision = []
@@ -223,6 +264,7 @@ def model_eval_all_test(contact_net, test_generator, device, dataset_name):
     all_auprc = []
     n_postprocess_fallback = 0
     n_skipped = 0
+    saved_preds = [] if save_predictions else None
 
     with torch.no_grad():
         for contacts, seq_embeddings, matrix_reps, seq_lens, seq_ori, seq_name in test_generator:
@@ -246,6 +288,15 @@ def model_eval_all_test(contact_net, test_generator, device, dataset_name):
                 n_postprocess_fallback += 1
 
             true_label = contacts[0, :seq_len, :seq_len]
+
+            # Save predictions for user re-evaluation
+            if saved_preds is not None:
+                saved_preds.append({
+                    'id': seq_name[0] if isinstance(seq_name[0], str) else seq_name[0].item(),
+                    'seq_len': seq_len,
+                    'pred': pred_prob.numpy(),
+                    'label': true_label.numpy(),
+                })
 
             # Flatten for binary metrics (matching secondary_structure_metircs)
             p = pred_prob.flatten()
@@ -284,22 +335,38 @@ def model_eval_all_test(contact_net, test_generator, device, dataset_name):
         print(f'  (Postprocess fallback to sigmoid: {n_postprocess_fallback} samples)')
     print(f'{"=" * 60}\n')
 
+    # Save predictions for user re-evaluation
+    if save_predictions and saved_preds:
+        import pickle as pkl
+        os.makedirs(os.path.dirname(save_predictions) or '.', exist_ok=True)
+        with open(save_predictions, 'wb') as f:
+            pkl.dump(saved_preds, f)
+        print(f'Predictions saved to {save_predictions} ({len(saved_preds)} samples)')
+
     return results
 
 
 # ======================================================================
 # Main
 # ======================================================================
-def parse_rivals_args():
-    parser = argparse.ArgumentParser(description='UFold training on Rivals dataset')
+def parse_args():
+    parser = argparse.ArgumentParser(description='UFold training on benchmark datasets')
     parser.add_argument('--gpu', type=int, default=0,
                         help='GPU device ID (default: 0)')
     parser.add_argument('--data_dir', type=str,
                         default='/home/xiwang/project/develop/data/rivals',
-                        help='Path to rivals data directory')
+                        help='Path to data directory')
     parser.add_argument('--save_dir', type=str,
                         default='./models_rivals',
                         help='Directory to save checkpoints')
+    parser.add_argument('--train_file', type=str,
+                        default='TrainSetA-addss.pkl',
+                        help='Training pickle file name')
+    parser.add_argument('--val_file', type=str, default=None,
+                        help='Validation pickle file name (optional)')
+    parser.add_argument('--test_files', type=str, nargs='+',
+                        default=['TestSetA-addss.pkl', 'TestSetB-addss.pkl'],
+                        help='Test pickle file names')
     parser.add_argument('-c', '--config', type=str,
                         default='ufold/config.json',
                         help='UFold config file')
@@ -307,15 +374,15 @@ def parse_rivals_args():
 
 
 def main():
-    rivals_args = parse_rivals_args()
-    GPU_ID = rivals_args.gpu
-    DATA_DIR = rivals_args.data_dir
-    SAVE_DIR = rivals_args.save_dir
+    args = parse_args()
+    GPU_ID = args.gpu
+    DATA_DIR = args.data_dir
+    SAVE_DIR = args.save_dir
     os.makedirs(SAVE_DIR, exist_ok=True)
 
     torch.cuda.set_device(GPU_ID)
 
-    config = process_config(rivals_args.config)
+    config = process_config(args.config)
     print('#####Stage 1#####')
     print('Here is the configuration of this run: ')
     print(config)
@@ -327,9 +394,9 @@ def main():
 
     seed_torch()
 
-    # [RIVALS] Load rivals data instead of UFold-format pickle files
-    print('Loading rivals dataset...')
-    train_data = RivalsDataGenerator(os.path.join(DATA_DIR, 'TrainSetA-addss.pkl'))
+    # Load training data
+    print('Loading training dataset...')
+    train_data = RivalsDataGenerator(os.path.join(DATA_DIR, args.train_file))
 
     # DataLoader params (identical to ufold_train.py:173-177)
     params = {'batch_size': BATCH_SIZE,
@@ -340,26 +407,38 @@ def main():
     train_merge = RivalsDataset([train_data])
     train_merge_generator = data.DataLoader(train_merge, **params)
 
+    # Load validation data if provided
+    val_generator = None
+    if args.val_file:
+        print('Loading validation dataset...')
+        val_data = RivalsDataGenerator(os.path.join(DATA_DIR, args.val_file))
+        val_set = RivalsDataset([val_data])
+        val_generator = data.DataLoader(val_set, batch_size=1, shuffle=False,
+                                        num_workers=6, drop_last=False)
+
     # img_ch=17: 16 pairwise + 1 creatmat (identical to original UFold)
     contact_net = FCNNet(img_ch=17)
     contact_net.to(device)
 
     t0 = time.time()
-    train(contact_net, train_merge_generator, epoches_first, SAVE_DIR)
+    train(contact_net, train_merge_generator, epoches_first, SAVE_DIR,
+          val_generator=val_generator, device=device)
     train_time = time.time() - t0
     print(f'\nTraining completed in {train_time / 60:.1f} minutes')
 
-    # [RIVALS] Evaluate on TestSetA and TestSetB
+    # Evaluate on test sets
     test_params = {'batch_size': 1, 'shuffle': False,
                    'num_workers': 6, 'drop_last': False}
 
     all_results = {}
-    for test_name, test_file in [('TestSetA', 'TestSetA-addss.pkl'),
-                                  ('TestSetB', 'TestSetB-addss.pkl')]:
+    for test_file in args.test_files:
+        test_name = test_file.replace('-addss.pkl', '').replace('.pkl', '')
         test_data = RivalsDataGenerator(os.path.join(DATA_DIR, test_file))
         test_set = RivalsDataset([test_data])
         test_generator = data.DataLoader(test_set, **test_params)
-        results = model_eval_all_test(contact_net, test_generator, device, test_name)
+        pred_path = os.path.join(SAVE_DIR, f'predictions_{test_name}.pkl')
+        results = model_eval_all_test(contact_net, test_generator, device, test_name,
+                                      save_predictions=pred_path)
         all_results[test_name] = results
 
     # Final summary
