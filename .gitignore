@@ -10,5 +10,13 @@ __pycache__/
 models/
 models_rivals/
 models_mxfold2/
+models_unirna_ss/
+models_ipknot/
+models_archiveII/
+models_bprna1m/
+logs/
 data/
 predictions_*.pkl
+# checkpoints/ — .pt files uploaded to GDrive, not git.
+# Keep README.md and MD5SUMS tracked so reviewers can verify downloads.
+checkpoints/*.pt
