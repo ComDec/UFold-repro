@@ -653,11 +653,11 @@ PYTHONUNBUFFERED=1 python3 run_exp.py exp1 eval_from_checkpoint.py \
 
 ---
 
-## 8. Pseudoknot-aware evaluation (ArchiveII & iPKnot, 2026-04-10)
+## 8. Pseudoknot-aware evaluation (UniRNA-SS, ArchiveII & iPKnot)
 
 ### Motivation
 
-iPKnot is explicitly a pseudoknot benchmark and ArchiveII is rich in PK-containing families. UFold's single-F1 headline number does not separate PK performance from standard base pair performance. The user pointed to `/home/xiwang/project/develop/deeprna/deeprna/metrics/pseudoknot.py` as the authoritative PK metric module.
+iPKnot is explicitly a pseudoknot benchmark, ArchiveII is rich in PK-containing families, and UniRNA-SS contains a moderate fraction of PK-bearing samples. UFold's single-F1 headline number does not separate PK performance from standard base pair performance. The authoritative PK metric module is `/home/xiwang/project/develop/deeprna/deeprna/metrics/pseudoknot.py`.
 
 ### Metric definitions (from `pseudoknot.py`)
 
@@ -668,20 +668,22 @@ iPKnot is explicitly a pseudoknot benchmark and ArchiveII is rich in PK-containi
 ### Setup
 
 - **Script**: `eval_pk_from_predictions.py` (new, standalone, CPU-only).
-- **Input**: existing saved predictions files from Runs 4 and 5 — NOT recomputed from checkpoint.
+- **Input**: existing saved predictions files from Runs 3, 4, and 5 — NOT recomputed from checkpoint.
+  - `models_unirna_ss/predictions_test.pkl` (1041 samples)
   - `models_archiveII/predictions_archiveII.pkl` (3966 samples)
   - `models_ipknot/predictions_bpRNA-PK-TS0-1K.pkl` (2914 samples)
 - **Metric module**: imported from `/home/xiwang/project/develop/deeprna` via `sys.path.insert`. The `evaluate_structure_metrics` function is called **unmodified**. Per-sample `pred` (postprocessed) is passed as `pred_prob`; `label` is passed as-is.
 - **Threshold**: 0.5 (same as `pseudoknot.py` default and all other UFold evaluations in this repo).
 - **No GPU, no re-inference.** Guarantees we score the exact same artifact that produced the documented F1s.
-- **Process disguise**: launched via `run_exp.py` as `exp33` (ArchiveII) and `exp34` (iPKnot).
+- **Process disguise**: ArchiveII and iPKnot launched via `run_exp.py` as `exp33`/`exp34`. UniRNA-SS run directly.
 
 ### Standard-metric sanity check (recomputed from saved pkls)
 
 Verifies the saved predictions still produce the REPRODUCTION.md numbers:
 
-| Dataset | P | R | F1 (torcheval) | AUROC | AUPRC | Matches REPRODUCTION.md? |
+| Dataset | P | R | F1 (torcheval) | AUROC | AUPRC | Matches? |
 |---|---|---|---|---|---|---|
+| UniRNA-SS | 0.4514 | 0.6383 | 0.4394 | 0.7422 | 0.3420 | ✓ Run 3 exactly |
 | ArchiveII | 0.6831 | 0.6533 | 0.6584 | 0.8333 | 0.5755 | ✓ Run 5 exactly |
 | iPKnot | 0.4093 | 0.6118 | 0.4118 | 0.7349 | 0.3275 | ✓ Run 4 exactly |
 
@@ -689,26 +691,28 @@ Verifies the saved predictions still produce the REPRODUCTION.md numbers:
 
 | Dataset | n_total | n_pk | score (sklearn F1) | score_pk | pk_sen | pk_ppv | pk_f1 |
 |---|---|---|---|---|---|---|---|
+| UniRNA-SS | 1041 | 164 (15.8%) | 0.4387 | 0.1111 | 0.0229 | 0.0178 | **0.0197** |
 | ArchiveII | 3966 | 1079 (27.2%) | 0.6576 | 0.2167 | 0.0045 | 0.0011 | **0.0013** |
 | iPKnot (bpRNA-PK-TS0-1K) | 2914 | 353 (12.1%) | 0.4105 | 0.1869 | 0.0667 | 0.0654 | **0.0639** |
 
 Notes:
-- sklearn `score` vs torcheval F1 differ by <0.002 on both datasets — they are numerically equivalent within rounding. The small gap comes from sklearn's `zero_division=0.0` handling vs torcheval's per-sample precision/recall formula.
-- **`n_pk` counts samples with ≥1 crossing pair in the ground truth.** Empty-label samples (5 in each dataset, skipped in the torcheval F1) are counted under `n_total` here because `evaluate_structure_metrics` does not skip them.
+- sklearn `score` vs torcheval F1 differ by <0.002 on all datasets — numerically equivalent within rounding (sklearn `zero_division=0.0` vs torcheval per-sample formula).
+- **`n_pk` counts samples with ≥1 crossing pair in the ground truth.** Empty-label samples (skipped in torcheval F1) are counted under `n_total` here because `evaluate_structure_metrics` does not skip them.
 
 ### Interpretation
 
-1. **UFold cannot predict pseudoknots.** `pk_f1` is 0.001 on ArchiveII and 0.06 on iPKnot. The U-Net + Augmented-Lagrangian pipeline does not explicitly model crossing pairs, and the Lagrangian postprocess enforces at most one partner per position but does not bias toward or against crossing structures. The near-zero `pk_sen` (0.0045 / 0.0667) is the dominant failure mode — the U-Net rarely outputs high probability at crossing-pair positions, because neither training set contains enough PK examples.
+1. **UFold cannot predict pseudoknots.** `pk_f1` ranges from 0.001 (ArchiveII) to 0.020 (UniRNA-SS) to 0.064 (iPKnot) — all near-zero. The U-Net + Augmented-Lagrangian pipeline does not explicitly model crossing pairs, and the Lagrangian postprocess enforces at most one partner per position but does not bias toward or against crossing structures. The near-zero `pk_sen` is the dominant failure mode — the U-Net rarely outputs high probability at crossing-pair positions, because training sets contain few PK examples.
 
-2. **PK-containing samples are uniformly harder.** `score_pk` is 3× lower than overall F1 on both datasets (0.22 vs 0.66, 0.19 vs 0.41). The presence of a pseudoknot makes the entire sample harder to predict, not just the crossing pairs.
+2. **PK-containing samples are uniformly harder.** `score_pk` is 3-4× lower than overall F1 across all three datasets (0.11 vs 0.44 for UniRNA-SS, 0.22 vs 0.66 for ArchiveII, 0.19 vs 0.41 for iPKnot). The presence of a pseudoknot makes the entire sample harder to predict, not just the crossing pairs.
 
-3. **Train-set PK content matters.** iPKnot's training set `bpRNA-TR0.pkl` has more PK exposure than ArchiveII's `RNAStrAlign600-train.pkl`, which is why iPKnot's `pk_f1` is 50× higher (0.064 vs 0.001). Still both are uncompetitive with PK-specialized tools like iPKnot, ProbKnot, or SPOT-RNA's pseudoknot extensions.
+3. **Train-set PK content matters.** iPKnot's training set `bpRNA-TR0.pkl` has the most PK exposure, followed by UniRNA-SS's `train.pkl`, then ArchiveII's `RNAStrAlign600-train.pkl`. This tracks the ordering of `pk_f1`: iPKnot (0.064) > UniRNA-SS (0.020) > ArchiveII (0.001). None is competitive with PK-specialized tools like iPKnot, ProbKnot, or SPOT-RNA's pseudoknot extensions.
 
 ### Files
 
 | File | Status |
 |---|---|
 | `eval_pk_from_predictions.py` | new standalone script |
+| `logs/ufold_unirna_ss_pkeval.log` | new log (~3 min) |
 | `logs/ufold_archiveII_pkeval.log` | new log (~13 min) |
 | `logs/ufold_ipknot_pkeval.log` | new log (~7.5 min) |
 | `ufold_train_rivals.py`, `eval_from_checkpoint.py` | unchanged |

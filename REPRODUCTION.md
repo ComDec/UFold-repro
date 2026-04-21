@@ -189,6 +189,22 @@ Metrics independently recomputed from `models_unirna_ss/predictions_test.pkl` --
 - Predictions: `models_unirna_ss/predictions_test.pkl` (1041 samples, contains per-sample `{id, seq_len, pred, label}`)
 - Training log: `models_unirna_ss/training.log`
 
+### Pseudoknot metrics (added 2026-04-21)
+
+Computed from saved predictions (no GPU re-inference) using `evaluate_structure_metrics` from `/home/xiwang/project/develop/deeprna/deeprna/metrics/pseudoknot.py`, unmodified. Script: `eval_pk_from_predictions.py`. Log: `logs/ufold_unirna_ss_pkeval.log`.
+
+| Metric | Value | Description |
+|---|---|---|
+| n_total | 1041 | Total samples evaluated |
+| n_pk | 164 (15.8%) | Samples containing ≥1 pseudoknot (crossing pair) |
+| score | 0.4387 | sklearn F1 on all samples — matches torcheval F1 (0.4394) within rounding |
+| score_pk | 0.1111 | sklearn F1 on PK-containing samples only (75% lower than overall) |
+| pk_sen | 0.0229 | Sensitivity on crossing base pairs |
+| pk_ppv | 0.0178 | PPV on crossing base pairs |
+| **pk_f1** | **0.0197** | F1 on crossing base pairs |
+
+UniRNA-SS's pk_f1 (0.020) sits between ArchiveII (0.001) and iPKnot (0.064), consistent with intermediate PK content in the training data.
+
 ---
 
 ## Run 4: iPKnot (2026-04-08)

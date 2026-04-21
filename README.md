@@ -137,7 +137,7 @@ Tolerance: CUDA floating-point operations are not bit-deterministic across runs.
 
 ---
 
-## 4. Pseudoknot-aware evaluation (ArchiveII + iPKnot)
+## 4. Pseudoknot-aware evaluation (UniRNA-SS, ArchiveII, iPKnot)
 
 Additional metrics from the DeepRNA pseudoknot module (`deeprna.metrics.pseudoknot`, used unmodified):
 - **score** — overall F1 (sklearn `f1_score` on flattened binarized contact maps)
@@ -148,9 +148,9 @@ Additional metrics from the DeepRNA pseudoknot module (`deeprna.metrics.pseudokn
 # Requires the DeepRNA repo accessible at /home/xiwang/project/develop/deeprna
 # (or adjust the sys.path.insert in eval_pk_from_predictions.py)
 
-# First generate postprocessed predictions once (part of §3 output):
-#   models_archiveII/predictions_archiveII.pkl  (from eval_all.sh Chain A)
-#   models_ipknot/predictions_bpRNA-PK-TS0-1K.pkl  (from Chain B)
+python eval_pk_from_predictions.py \
+    --predictions models_unirna_ss/predictions_test.pkl \
+    --dataset_name UniRNA-SS
 
 python eval_pk_from_predictions.py \
     --predictions models_archiveII/predictions_archiveII.pkl \
@@ -161,16 +161,17 @@ python eval_pk_from_predictions.py \
     --dataset_name iPKnot
 ```
 
-Wall time: ArchiveII ~12 min, iPKnot ~7 min. CPU-only, no GPU needed.
+Wall time: UniRNA-SS ~3 min, ArchiveII ~12 min, iPKnot ~7 min. CPU-only, no GPU needed.
 
 Expected output:
 
 | Benchmark | n_total | n_pk | score (F1) | score_pk | pk_sen | pk_ppv | **pk_f1** |
 |---|---|---|---|---|---|---|---|
+| UniRNA-SS | 1041 | 164 (15.8%) | 0.4387 | 0.1111 | 0.0229 | 0.0178 | **0.0197** |
 | ArchiveII | 3966 | 1079 (27.2%) | 0.6576 | 0.2167 | 0.0045 | 0.0011 | **0.0013** |
 | iPKnot | 2914 | 353 (12.1%) | 0.4105 | 0.1869 | 0.0667 | 0.0654 | **0.0639** |
 
-**Interpretation**: UFold's U-Net + Augmented-Lagrangian postprocess does not model crossing base pairs explicitly. `pk_f1` is essentially zero on ArchiveII (0.001) and very small on iPKnot (0.06). F1 on PK-containing samples (`score_pk`) is roughly 3× lower than overall F1 on both datasets. See [`Benchmark.md`](Benchmark.md) §8 for full discussion.
+**Interpretation**: UFold's U-Net + Augmented-Lagrangian postprocess does not model crossing base pairs explicitly. `pk_f1` ranges from 0.001 (ArchiveII) to 0.064 (iPKnot), all near-zero. UniRNA-SS sits in between at 0.020. F1 on PK-containing samples (`score_pk`) is roughly 3-4× lower than overall F1 across all three datasets. See [`Benchmark.md`](Benchmark.md) §8 for full discussion.
 
 The sklearn `score` differs from the torcheval F1 in §3 by <0.002; this is a numerical equivalence within rounding (sklearn uses per-sample `zero_division=0.0`).
 
