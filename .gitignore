@@ -1,22 +1,20 @@
 *.pickle
-*.pt
 *.cPickle
 *.fa
 *.pyc
-*.pkl
 __pycache__/
 .ruff_cache/
 .worktrees/
-models/
-models_rivals/
-models_mxfold2/
-models_unirna_ss/
-models_ipknot/
-models_archiveII/
-models_bprna1m/
-logs/
+
+# Data (downloaded from GDrive)
 data/
-predictions_*.pkl
-# checkpoints/ — .pt files uploaded to GDrive, not git.
-# Keep README.md and MD5SUMS tracked so reviewers can verify downloads.
+
+# Checkpoints and predictions (.pt and .pkl uploaded to GDrive)
 checkpoints/*.pt
+predictions/*.pkl
+
+# Logs
+logs/
+
+# Archive (development history, uploaded to GDrive)
+archive/

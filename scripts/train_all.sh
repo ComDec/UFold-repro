@@ -1,21 +1,11 @@
 #!/usr/bin/env bash
-# Reviewer-facing training script.
-# Trains UFold on all 6 benchmarks from scratch.
-# Each training run is 100 epochs; expected wall time per run:
-#   Rivals:       ~1.5 h    (smallest)
-#   UniRNA-SS:    ~5 h
-#   bpRNA-1m:     ~6 h
-#   ArchiveII:    ~12 h     (largest training set)
-#   iPKnot:       ~5 h
-# Total: ~30 h single-GPU sequential, or ~12 h with 3 GPU parallelism.
+# Train UFold on all 5 benchmarks from scratch.
+# Total: ~30 h single-GPU sequential.
 #
-# Note: bpRNA-1m-new uses the same model as bpRNA-1m (no separate training).
+# bpRNA-1m-new uses the same checkpoint as bpRNA-1m (epoch 99).
 #
 # Usage:
 #   bash scripts/train_all.sh <data_dir> <out_dir> [gpu_id]
-#
-# Example:
-#   bash scripts/train_all.sh ./data ./models_retrain 0
 
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -59,32 +49,23 @@ run_one() {
     echo "[train_all] $name done -> $save"
 }
 
-# ---------- 1. Rivals ----------
+# 1. Rivals
 run_one rivals    rivals         TrainSetA-addss.pkl  "" \
     "TestSetA-addss.pkl TestSetB-addss.pkl"
 
-# ---------- 2. UniRNA-SS ----------
+# 2. UniRNA-SS
 run_one unirna_ss all_data_1024_0.75 train.pkl valid.pkl "test.pkl"
 
-# ---------- 3. bpRNA-1m (also provides model for bpRNA-1m-new) ----------
+# 3. bpRNA-1m (checkpoint also used for bpRNA-1m-new)
 run_one bprna1m   mxfold2        TR0-canonicals.pkl   VL0-canonicals.pkl \
-    "TS0-canonicals.pkl"
+    "bpRNAnew.pkl"
 
-# ---------- 4. ArchiveII ----------
+# 4. ArchiveII
 run_one archiveII mxfold2        RNAStrAlign600-train.pkl "" \
     "archiveII.pkl"
 
-# ---------- 5. iPKnot ----------
+# 5. iPKnot
 run_one ipknot    ipkont         bpRNA-TR0.pkl        "" \
     "bpRNA-PK-TS0-1K.pkl"
-
-# ---------- 6. bpRNA-1m-new: inference-only using bpRNA-1m epoch 9 ----------
-echo "[train_all] bpRNA-1m-new: using early-stopped epoch 9 checkpoint from bpRNA-1m ..."
-"$PY" eval_from_checkpoint.py \
-    --gpu "$GPU" \
-    --checkpoint "${OUT_DIR}/bprna1m/ufold_train_rivals_9.pt" \
-    --test_file "${DATA_DIR}/mxfold2/bpRNAnew.pkl" \
-    > logs/eval_bprna1m_new.log 2>&1
-echo "[train_all] bpRNA-1m-new done -> logs/eval_bprna1m_new.log"
 
 echo "[train_all] ALL DONE. Checkpoints in $OUT_DIR, logs in logs/"
