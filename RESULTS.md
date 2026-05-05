@@ -198,3 +198,27 @@ bash scripts/eval_all.sh ./data ./models_retrain 0,1,2
 - All checkpoints are epoch 99 (100 epochs total).
 - BIB/CompaRNA evaluation uses `sklearn.metrics.f1_score` on the lower triangle (each base pair counted once). In-domain evaluation uses `torcheval` on the full flattened matrix — numerically equivalent for symmetric contact maps.
 - Pseudoknot metrics require the DeepRNA package (`deeprna.metrics.pseudoknot`).
+
+### Postprocessing NaN Issue (Algorithm Deficiency)
+
+UFold's Augmented Lagrangian postprocessing suffers from numerical divergence on longer sequences, producing NaN predictions. These samples are **not filtered** — they remain in the evaluation and effectively receive F1 ≈ 0 (torcheval treats NaN as positive predictions, yielding near-zero precision). This is an inherent limitation of UFold's postprocessing, not a data processing bug.
+
+| Benchmark | Total Samples | NaN Samples | NaN % | Onset Length |
+|---|---|---|---|---|
+| Rivals TestSetA | 592 | 0 | 0% | — |
+| Rivals TestSetB | 430 | 0 | 0% | — |
+| UniRNA-SS | 1041 | 180 | 17.3% | ~250 nt |
+| bpRNA-1m-new | 5401 | 435 | 8.1% | ~270 nt |
+| ArchiveII | 3966 | 21 | 0.5% | ~500 nt |
+| iPKnot | 2914 | 473 | 16.2% | ~250 nt |
+
+Impact on reported F1 (NaN samples contribute F1 ≈ 0 to the macro-average):
+
+| Benchmark | F1 (all samples, reported) | F1 (excluding NaN) | Δ |
+|---|---|---|---|
+| UniRNA-SS | 0.4394 | 0.5304 | +0.091 |
+| bpRNA-1m-new | 0.4639 | 0.5042 | +0.040 |
+| ArchiveII | 0.6584 | 0.6619 | +0.004 |
+| iPKnot | 0.4118 | 0.4911 | +0.079 |
+
+The NaN onset length varies by checkpoint because it depends on the training data distribution — checkpoints trained on shorter sequences (UniRNA-SS, bpRNA-1m, iPKnot with max training length ~500 nt) diverge earlier than ArchiveII (trained on sequences up to 1800 nt). All reported results include these NaN samples without exclusion.
